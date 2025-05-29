@@ -1,0 +1,5 @@
+You can place your Excel files in this directory to be automatically detected by the application.
+
+For the Demand Planning module, name your file 'demand_data.xlsx'
+For the Inventory Optimization module, name your file 'inventory_data.xlsx'
+For the S&OP module, name your file 'sop_data.xlsx'

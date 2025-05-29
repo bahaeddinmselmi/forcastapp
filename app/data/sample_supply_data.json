@@ -1,0 +1,1 @@
+{"products": "sample_supply_products.csv", "resources": "sample_supply_resources.csv", "resource_requirements": "sample_supply_resource_requirements.csv", "demand": "sample_supply_demand.csv", "capacity": "sample_supply_capacity.csv", "materials": "sample_supply_materials.csv", "bom": "sample_supply_bom.csv"}

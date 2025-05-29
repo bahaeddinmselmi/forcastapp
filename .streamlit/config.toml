@@ -1,0 +1,18 @@
+[theme]
+base = "light"
+primaryColor="#0066B7"
+backgroundColor="#FFFFFF"
+secondaryBackgroundColor="#F0F2F6"
+textColor="#262730"
+font="sans serif"
+
+[server]
+enableCORS = false
+enableXsrfProtection = false
+headless = true
+enableWebsocketCompression = true
+port = 8510
+address = "0.0.0.0"
+
+[browser]
+gatherUsageStats = false

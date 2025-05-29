@@ -1,0 +1,976 @@
+"""
+Forecasting utilities for the IBP system.
+Implements various statistical and machine learning forecasting models.
+"""
+# Add warning suppression
+import warnings
+from statsmodels.tools.sm_exceptions import ConvergenceWarning
+
+# Silence common warnings that affect forecasting
+warnings.filterwarnings("ignore", message="Non-invertible starting MA parameters found")
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", message="Could not infer format")
+
+
+import numpy as np
+import pandas as pd
+from typing import Tuple, Dict, Any, List, Optional
+from datetime import datetime
+import statsmodels.api as sm
+from statsmodels.tsa.arima.model import ARIMA
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
+import xgboost as xgb
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error
+import matplotlib.pyplot as plt
+from prophet import Prophet
+
+# Add warning suppression
+import warnings
+from statsmodels.tools.sm_exceptions import ConvergenceWarning
+
+# Silence common warnings that affect forecasting
+warnings.filterwarnings("ignore", message="Non-invertible starting MA parameters found")
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", message="Could not infer format")
+warnings.filterwarnings("ignore", message="Covariance matrix is singular")
+# Add warning suppression
+import warnings
+from statsmodels.tools.sm_exceptions import ConvergenceWarning
+
+# Silence common warnings that affect forecasting
+warnings.filterwarnings("ignore", message="Non-invertible starting MA parameters found")
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", message="Could not infer format")
+warnings.filterwarnings("ignore", message="Covariance matrix is singular")
+
+
+
+def prepare_time_series_data(df: pd.DataFrame, 
+                        date_col: str, 
+                        target_col: str) -> pd.DataFrame:
+    """
+    Prepare time series data for forecasting.
+    
+    Args:
+        df: Input DataFrame
+        date_col: Name of the date column
+        target_col: Name of the target column to forecast
+        
+    Returns:
+        Prepared DataFrame with datetime index
+    """
+    # Ensure date column is datetime
+    df = df.copy()
+    
+    # Check if we have enough data
+    if len(df) < 3:
+        raise ValueError(f"Need at least 3 data points for forecasting, but only {len(df)} provided.")
+    
+    # Convert date column to datetime with enhanced error handling
+    if not pd.api.types.is_datetime64_any_dtype(df[date_col]):
+        # Use a more robust date parser that accepts many formats
+        from utils.date_utils import parse_date_formats
+        
+        # Get the selected year from session state if available
+        try:
+            import streamlit as st
+            selected_year = st.session_state.get('config', {}).get('selected_year', None)
+        except:
+            selected_year = None
+        
+        # Convert the column with our enhanced parser
+        df[date_col] = df[date_col].apply(lambda x: parse_date_formats(x, selected_year=selected_year))
+        
+        # Count invalid dates
+        invalid_count = df[date_col].isna().sum()
+        if invalid_count > 0:
+            print(f"Found {invalid_count} invalid dates that couldn't be parsed. These rows will be excluded.")
+    
+    # Convert target column to numeric
+    df[target_col] = pd.to_numeric(df[target_col], errors='coerce')
+    
+    # Drop rows with NaN values after conversion
+    df = df.dropna(subset=[date_col, target_col])
+    
+    # Verify we still have enough data
+    if len(df) < 3:
+        raise ValueError(f"After removing invalid values, only {len(df)} valid data points remain. Need at least 3 for forecasting.")
+    
+    # Set date as index
+    df = df.set_index(date_col)
+    
+    # Sort by date
+    df = df.sort_index()
+    
+    # Ensure the index has a frequency
+    try:
+        # Sort the index to ensure dates are in chronological order
+        df = df.sort_index()
+        
+        # Handle the specific case of MMM-YY format (like Mar-20, Apr-20)
+        # Check if all dates are on the 1st day of the month
+        if all(d.day == 1 for d in df.index):
+            print("All dates appear to be month starts. Forcing 'MS' frequency.")
+            # For MMM-YY type data, force monthly frequency
+            new_index = pd.date_range(start=df.index.min(), end=df.index.max(), freq='MS')
+            
+            # Create a temporary dataframe with the new index
+            temp_df = pd.DataFrame(index=new_index)
+            
+            # Merge with original data - this will align months properly
+            df = df.join(temp_df, how='outer')
+            df = df.fillna(method='ffill').fillna(method='bfill')
+            
+            print(f"Adjusted index to monthly frequency with {len(df)} data points.")
+            return df
+        
+        # Check if index already has a frequency
+        if df.index.freq is None:
+            # Try to infer frequency
+            try:
+                freq = pd.infer_freq(df.index)
+            except Exception as e:
+                print(f"Error inferring frequency: {str(e)}")
+                freq = None
+            
+            # If frequency inference fails, use calendar logic
+            if freq is None:
+                # Check if data appears to be monthly by looking at day differences
+                dates = df.index
+                diffs = [(dates[i+1] - dates[i]).days for i in range(len(dates)-1)]
+                
+                # Most monthly data will have differences between 28-31 days
+                if len(diffs) > 0 and all(25 <= diff <= 32 for diff in diffs):
+                    print("Data appears to be monthly with regular intervals.")
+                    freq = 'MS'  # Month start
+                # Check if the months are all different (regardless of days)
+                elif all(dates[i].month != dates[i+1].month or dates[i].year != dates[i+1].year 
+                         for i in range(len(dates)-1)):
+                    print("Data appears to be monthly (different months).")
+                    freq = 'MS'  # Month start
+                # Check for quarterly data
+                elif len(dates) >= 2 and all(85 <= diff <= 95 for diff in diffs):
+                    print("Data appears to be quarterly.")
+                    freq = 'QS'  # Quarter start
+                else:
+                    # Look at the most common difference
+                    if len(diffs) > 0:
+                        avg_diff = sum(diffs) / len(diffs)
+                        print(f"Average day difference: {avg_diff}")
+                        
+                        if 25 <= avg_diff <= 32:
+                            print("Data appears to be approximately monthly based on average intervals.")
+                            freq = 'MS'
+                        elif 85 <= avg_diff <= 95:
+                            print("Data appears to be approximately quarterly based on average intervals.")
+                            freq = 'QS'
+                        else:
+                            print(f"Could not determine frequency. Using default monthly frequency.")
+                            freq = 'MS'
+                    else:
+                        print("Not enough data points to determine frequency. Using monthly.")
+                        freq = 'MS'
+                
+                # Create a proper date range with the detected frequency
+                try:
+                    new_index = pd.date_range(start=df.index.min(), end=df.index.max(), freq=freq)
+                    
+                    # Create a temporary dataframe with the new index
+                    temp_df = pd.DataFrame(index=new_index)
+                    
+                    # Merge with original data
+                    merged_df = df.join(temp_df, how='right')
+                    
+                    # Only fill in missing values if there are any
+                    if merged_df.isna().any().any():
+                        merged_df = merged_df.fillna(method='ffill').fillna(method='bfill')
+                        df = merged_df
+                    else:
+                        # Just set the frequency attribute
+                        df.index = pd.DatetimeIndex(df.index, freq=freq)
+                except Exception as e:
+                    print(f"Error creating regular date range: {str(e)}")
+                    # Just set the frequency attribute as a last resort
+                    df.index = pd.DatetimeIndex(df.index, freq=freq)
+            else:
+                # Use the inferred frequency
+                df.index = pd.DatetimeIndex(df.index, freq=freq)
+    except Exception as e:
+        print(f"Warning in frequency handling: {str(e)}")
+        # Set a default frequency as last resort
+        try:
+            df.index = pd.DatetimeIndex(df.index, freq='MS')
+        except:
+            print("Could not set frequency attribute. Returning original dataframe.")
+    
+    return df
+
+
+def apply_selected_year_to_dates(date_index, selected_year=None):
+    """
+    Applies a selected year to all dates in a date index.
+    If selected_year is None, keep the original years.
+    
+    Args:
+        date_index: DatetimeIndex to modify
+        selected_year: Year to apply to all dates
+        
+    Returns:
+        DatetimeIndex with updated years
+    """
+    if selected_year is None:
+        return date_index
+        
+    try:
+        # Convert to pandas DatetimeIndex if not already
+        if not isinstance(date_index, pd.DatetimeIndex):
+            date_index = pd.DatetimeIndex(date_index)
+            
+        # Apply the selected year to all dates
+        adjusted_dates = [d.replace(year=selected_year) for d in date_index]
+        return pd.DatetimeIndex(adjusted_dates)
+    except Exception as e:
+        # Return original if anything fails
+        return date_index
+
+
+def train_test_split_time_series(df: pd.DataFrame, 
+                            test_size: float = 0.2) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Split time series data into train and test sets.
+    
+    Args:
+        df: DataFrame with datetime index
+        test_size: Proportion of data to use for testing (0.0 to 1.0)
+        
+    Returns:
+        Tuple of (train_data, test_data)
+    """
+    n = len(df)
+    train_size = int(n * (1 - test_size))
+    
+    train_data = df.iloc[:train_size].copy()
+    test_data = df.iloc[train_size:].copy()
+    
+    return train_data, test_data
+
+
+def arima_forecast(train_data: pd.Series, 
+                periods: int, 
+                order: Tuple[int, int, int] = (1, 1, 1),
+                seasonal_order: Tuple[int, int, int, int] = None,
+                return_conf_int: bool = True,
+                alpha: float = 0.05,
+                future_index: Optional[pd.DatetimeIndex] = None) -> Dict[str, Any]:
+    """
+    Forecast using ARIMA or SARIMA model.
+    
+    Args:
+        train_data: Training data as pandas Series with datetime index
+        periods: Number of periods to forecast
+        order: ARIMA order (p, d, q)
+        seasonal_order: Seasonal order (P, D, Q, S) for SARIMA
+        return_conf_int: Whether to return confidence intervals
+        alpha: Significance level for confidence intervals
+        future_index: Optional custom future DatetimeIndex for forecast
+        
+    Returns:
+        Dictionary with forecast results
+    """
+    # Import warnings to suppress specific warnings
+    import warnings
+    from statsmodels.tools.sm_exceptions import ConvergenceWarning
+    
+    try:
+        # Temporarily suppress specific warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', 'Non-invertible starting MA parameters found.*')
+            warnings.filterwarnings('ignore', category=ConvergenceWarning)
+            
+            # Try to fit the model with the specified parameters
+            if seasonal_order is not None:
+                # Use SARIMA for seasonal data
+                model = SARIMAX(
+                    train_data,
+                    order=order,
+                    seasonal_order=seasonal_order,
+                    enforce_stationarity=False,
+                    enforce_invertibility=False
+                )
+            else:
+                # Use ARIMA for non-seasonal data
+                model = ARIMA(
+                    train_data, 
+                    order=order,
+                    enforce_stationarity=False,
+                    enforce_invertibility=False
+                )
+            
+            # Fit the model with relaxed convergence criteria to avoid warnings
+            model_fit = model.fit(method='powell', disp=False, maxiter=100)
+            
+            # Determine forecast periods based on future_index if provided
+            if future_index is not None:
+                forecast_periods = len(future_index)
+            else:
+                forecast_periods = periods
+            
+            # Generate forecast with or without confidence intervals
+            if return_conf_int:
+                forecast = model_fit.get_forecast(steps=forecast_periods)
+                forecast_mean = forecast.predicted_mean
+                forecast_ci = forecast.conf_int(alpha=alpha)
+                
+                if future_index is not None:
+                    # Map predictions to custom future index
+                    pred_series = pd.Series(forecast_mean.values, index=future_index)
+                    lower_series = pd.Series(forecast_ci.iloc[:, 0].values, index=future_index)
+                    upper_series = pd.Series(forecast_ci.iloc[:, 1].values, index=future_index)
+                else:
+                    # Use the model's generated index
+                    pred_series = forecast_mean
+                    lower_series = forecast_ci.iloc[:, 0]
+                    upper_series = forecast_ci.iloc[:, 1]
+            else:
+                # Generate forecast without confidence intervals
+                forecast_mean = model_fit.forecast(steps=forecast_periods)
+                if future_index is not None:
+                    pred_series = pd.Series(forecast_mean.values, index=future_index)
+                else:
+                    pred_series = forecast_mean
+                lower_series = upper_series = None
+        
+        # Return results
+        results = {
+            'forecast': pred_series,
+            'model': 'ARIMA' if seasonal_order is None else 'SARIMA',
+            'order': order,
+            'seasonal_order': seasonal_order,
+            'model_fit': model_fit,
+            'AIC': model_fit.aic,
+            'BIC': model_fit.bic
+        }
+        
+        # Add confidence intervals if available
+        if return_conf_int and lower_series is not None and upper_series is not None:
+            results['lower_bound'] = lower_series
+            results['upper_bound'] = upper_series
+            
+        return results
+        
+    except Exception as e:
+        print(f"Error in ARIMA forecast: {str(e)}. Trying simplified model...")
+        
+        # If first attempt failed, try a simpler model with more robust parameters
+        try:
+            # Use simpler model parameters that are more likely to converge
+            simple_order = (1, 1, 0)  # Simple AR(1) with differencing
+            simple_seasonal = (1, 0, 0, 12) if seasonal_order else None  # Simple seasonal if needed
+            
+            # Temporarily suppress warnings again
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore', 'Non-invertible starting MA parameters found.*')
+                warnings.filterwarnings('ignore', category=ConvergenceWarning)
+                
+                if simple_seasonal:
+                    model = SARIMAX(
+                        train_data,
+                        order=simple_order,
+                        seasonal_order=simple_seasonal,
+                        enforce_stationarity=False,
+                        enforce_invertibility=False
+                    )
+                else:
+                    model = ARIMA(
+                        train_data, 
+                        order=simple_order
+                    )
+                
+                # Fit with more robust method
+                model_fit = model.fit(method='powell', disp=False)
+                
+                # Determine forecast periods
+                if future_index is not None:
+                    forecast_periods = len(future_index)
+                else:
+                    forecast_periods = periods
+                
+                # Simple forecast without confidence intervals to avoid errors
+                forecast_mean = model_fit.forecast(steps=forecast_periods)
+                
+                if future_index is not None:
+                    pred_series = pd.Series(forecast_mean.values, index=future_index)
+                else:
+                    pred_series = forecast_mean
+                
+                # Return simplified results
+                return {
+                    'forecast': pred_series,
+                    'model': 'Simple ARIMA',
+                    'order': simple_order,
+                    'seasonal_order': simple_seasonal,
+                    'note': 'Using simplified model due to convergence issues'
+                }
+                
+        except Exception as e2:
+            # If even the simple model fails, fall back to naive forecast
+            print(f"Simple ARIMA failed: {str(e2)}. Using naive forecast.")
+            try:
+                # Try to create a reasonable empty index
+                if future_index is not None:
+                    index_to_use = future_index
+                else:
+                    # Create an index based on last_date + periods
+                    try:
+                        last_date = train_data.index[-1]
+                        freq = pd.infer_freq(train_data.index) if train_data.index.freq is None else train_data.index.freq
+                        index_to_use = pd.date_range(start=last_date, periods=periods+1, freq=freq)[1:]
+                    except Exception:
+                        # Last resort: create a default numeric index
+                        index_to_use = range(periods)
+                        
+                # Use a super simple last-value forecast
+                last_value = train_data.iloc[-1]
+                forecast_values = [last_value] * periods
+                    
+                pred_series = pd.Series(forecast_values, index=index_to_use)
+                
+                return {
+                    'forecast': pred_series,
+                    'model': 'Naive Forecast',
+                    'note': 'Using last-value forecast due to ARIMA model failures'
+                }
+            except Exception as e3:
+                # Complete failure - return an empty forecast with error info
+                print(f"All forecast attempts failed: {str(e3)}")
+                return {
+                    'error': f"ARIMA model failed: {str(e)}. All backups also failed.",
+                    'model': 'Failed Forecast'
+                }
+        
+        # Generate forecast with custom dates if provided
+        if future_index is not None:
+            # User wants to forecast for specific future dates
+            forecast_periods = len(future_index)
+            custom_dates_info = f"Using custom date range starting from {future_index[0].strftime('%Y-%m-%d')}"
+            
+            forecast_values = model_fit.forecast(steps=forecast_periods)
+            forecast_series = pd.Series(forecast_values.values, index=future_index)
+        else:
+            # Standard forecast
+            forecast_series = model_fit.forecast(steps=periods)
+        
+        # Prepare result
+        result = {
+            "model": "Exponential Smoothing",
+            "forecast": forecast_series
+        }
+        
+        # Add info about custom dates if applicable
+        if future_index is not None:
+            result["custom_dates_info"] = custom_dates_info
+            
+        return result
+        
+    except Exception as e:
+        # Return empty forecast with error message
+        print(f"Error in Exponential Smoothing forecast: {str(e)}")
+        try:
+            if future_index is not None:
+                empty_index = future_index
+            else:
+                empty_index = pd.date_range(start=train_data.index[-1], periods=periods+1, freq='MS')[1:]
+        except:
+            empty_index = pd.date_range(start=datetime.now(), periods=periods, freq='MS')
+            
+        return {
+            "model": "Exponential Smoothing",
+            "forecast": pd.Series(np.zeros(periods), index=empty_index),
+            "error": str(e)
+        }
+
+
+def prophet_forecast(train_data: pd.DataFrame, 
+                periods: int,
+                date_col: str = 'ds',
+                target_col: str = 'y',
+                return_components: bool = False,
+                future_df: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
+    """
+    Forecast using Facebook Prophet.
+    
+    Args:
+        train_data: Training data DataFrame with date and target columns
+        periods: Number of periods to forecast
+        date_col: Name of the date column
+        target_col: Name of the target column
+        return_components: Whether to return forecast components
+        future_df: Optional custom future DataFrame for forecasting
+        
+    Returns:
+        Dictionary with forecast results
+    """
+    try:
+        # Prepare data in prophet format
+        prophet_df = train_data.reset_index()
+        
+        # Rename columns if needed
+        if date_col != 'ds':
+            prophet_df = prophet_df.rename(columns={date_col: 'ds'})
+        if target_col != 'y':
+            prophet_df = prophet_df.rename(columns={target_col: 'y'})
+        
+        # Select only needed columns
+        prophet_df = prophet_df[['ds', 'y']]
+        
+        # Create and fit model
+        model = Prophet(
+            yearly_seasonality=True,
+            weekly_seasonality=False,
+            daily_seasonality=False
+        )
+        model.fit(prophet_df)
+        
+        # Create future dataframe - use same frequency as the input data
+        try:
+            # Try to infer frequency from data
+            inferred_freq = pd.infer_freq(prophet_df['ds']) or 'MS'
+            # Use custom future dataframe if provided, otherwise create one
+            if future_df is not None:
+                future = future_df
+                custom_dates_info = f"Using custom date range starting from {future['ds'].min().strftime('%Y-%m-%d')}"
+            else:
+                # Create future dataframe for forecasting
+                future = model.make_future_dataframe(periods=periods, freq=inferred_freq)
+        except Exception as e:
+            # Default to monthly if frequency can't be inferred
+            if future_df is not None:
+                future = future_df
+                custom_dates_info = f"Using custom date range starting from {future['ds'].min().strftime('%Y-%m-%d')}"
+            else:
+                future = model.make_future_dataframe(periods=periods, freq='MS')
+        
+        # Generate forecast
+        forecast = model.predict(future)
+        
+        # Extract results
+        result = {
+            "model": "Prophet",
+            "forecast": pd.Series(forecast['yhat'].values, index=forecast['ds']),
+            "lower_bound": pd.Series(forecast['yhat_lower'].values, index=forecast['ds']),
+            "upper_bound": pd.Series(forecast['yhat_upper'].values, index=forecast['ds']),
+        }
+        
+        # Add components if requested
+        if return_components:
+            components = {
+                "trend": pd.Series(forecast['trend'].values, index=forecast['ds']),
+                "yearly": pd.Series(forecast['yearly'].values if 'yearly' in forecast else np.zeros(len(forecast)), index=forecast['ds']),
+                "weekly": pd.Series(forecast['weekly'].values if 'weekly' in forecast else np.zeros(len(forecast)), index=forecast['ds']),
+            }
+            result["components"] = components
+            
+        # Add info about custom dates if applicable
+        if future_df is not None:
+            result["custom_dates_info"] = custom_dates_info
+            
+        return result
+        
+    except Exception as e:
+        # Return empty forecast with error message
+        print(f"Error in Prophet forecast: {str(e)}")
+        empty_index = pd.date_range(start=datetime.now(), periods=periods, freq='MS')
+        return {
+            "model": "Prophet",
+            "forecast": pd.Series(np.zeros(periods), index=empty_index),
+            "error": str(e)
+        }
+
+
+def xgboost_forecast(train_data: pd.DataFrame, 
+                periods: int, 
+                features: List[str],
+                target: str,
+                lag_features: int = 3,
+                future_index: Optional[pd.DatetimeIndex] = None) -> Dict[str, Any]:
+    """
+    Forecast using XGBoost model with feature engineering.
+    
+    Args:
+        train_data: Training data DataFrame
+        periods: Number of periods to forecast
+        features: List of feature column names
+        target: Target column name
+        lag_features: Number of lag features to create
+        future_index: Optional custom future DatetimeIndex for forecast
+        
+    Returns:
+        Dictionary with forecast results
+    """
+    try:
+        # Copy data to avoid modifying the original
+        data = train_data.copy()
+        
+        # Create lag features
+        for col in features:
+            for lag in range(1, lag_features + 1):
+                data[f"{col}_lag{lag}"] = data[col].shift(lag)
+        
+        # Drop rows with NaN values (from lag creation)
+        data = data.dropna()
+        
+        # Prepare train data
+        X = data.drop(columns=[target])
+        y = data[target]
+        
+        # Create and train model
+        model = xgb.XGBRegressor(
+            objective='reg:squarederror',
+            n_estimators=100,
+            max_depth=4,
+            learning_rate=0.1,
+            random_state=42
+        )
+        model.fit(X, y)
+        
+        # Create future features for forecasting
+        future_features = []
+        
+        if future_index is not None:
+            # User wants forecast for specific future dates
+            forecast_periods = len(future_index)
+            custom_dates_info = f"Using custom date range starting from {future_index[0].strftime('%Y-%m-%d')}"
+        else:
+            forecast_periods = periods
+            
+        # Safety check - ensure we have enough data for lag features
+        if len(data) < lag_features + 1:
+            raise ValueError(f"Need at least {lag_features + 1} data points for lag features, but only have {len(data)}")
+        
+        # Make sure we have all feature columns
+        missing_features = [f for f in features if f not in data.columns]
+        if missing_features:
+            raise ValueError(f"Missing required feature columns: {missing_features}")
+            
+        # Create forecasting matrix one step at a time
+        forecast_values = []
+        last_data = data.iloc[-lag_features:].copy()  # We need lag_features past observations
+        
+        # Loop through forecast periods
+        for i in range(forecast_periods):
+            # Create new row with known features
+            new_row = pd.DataFrame(index=[0])
+            
+            # Fill lag features from past periods - with improved error handling
+            for lag in range(1, lag_features + 1):
+                for col in features:
+                    try:
+                        if i - lag + 1 < 0:  # Use historical data
+                            idx = lag - i - 1
+                            if idx < len(last_data):
+                                new_row[f"{col}_lag{lag}"] = last_data.iloc[idx][col]
+                            else:
+                                # Fall back to oldest available data if index out of range
+                                new_row[f"{col}_lag{lag}"] = last_data.iloc[0][col]
+                        else:  # Use forecasted values
+                            if i - lag < len(forecast_values):
+                                new_row[f"{col}_lag{lag}"] = forecast_values[i - lag]
+                            else:
+                                # Fall back to most recent forecast if index out of range
+                                new_row[f"{col}_lag{lag}"] = forecast_values[-1] if forecast_values else last_data.iloc[-1][col]
+                    except Exception as e:
+                        # Fallback to most recent value if any error occurs
+                        print(f"Warning in XGBoost lag creation: {str(e)}")
+                        new_row[f"{col}_lag{lag}"] = last_data.iloc[-1][col]
+            
+            # Make prediction for this period
+            next_pred = model.predict(new_row)[0]
+            forecast_values.append(next_pred)
+        
+        # Create forecast Series
+        if future_index is not None:
+            forecast_series = pd.Series(forecast_values, index=future_index)
+        else:
+            # Create default index if none provided
+            last_date = data.index[-1]
+            future_dates = pd.date_range(start=last_date, periods=periods+1, freq='MS')[1:]
+            forecast_series = pd.Series(forecast_values, index=future_dates)
+        
+        # Return results
+        result = {
+            "model": "XGBoost",
+            "forecast": forecast_series,
+            "feature_importance": dict(zip(X.columns, model.feature_importances_))
+        }
+        
+        # Add info about custom dates if applicable
+        if future_index is not None:
+            result["custom_dates_info"] = custom_dates_info
+            
+        return result
+    except Exception as e:
+        # Return empty forecast with error message
+        print(f"Error in XGBoost forecast: {str(e)}")
+        try:
+            empty_index = pd.date_range(start=train_data.index[-1], periods=periods+1, freq='MS')[1:]
+        except:
+            # If index is problematic, create a generic date range
+            empty_index = pd.date_range(start=pd.Timestamp.now(), periods=periods, freq='MS')
+            
+        return {
+            "model": "XGBoost",
+            "forecast": pd.Series(np.zeros(periods), index=empty_index),
+            "error": str(e)
+        }
+
+
+def prepare_cumulative_forecast(forecasts: Dict[str, Dict[str, Any]], 
+                            historical_data: pd.DataFrame,
+                            target_col: str,
+                            test_data: Optional[pd.DataFrame] = None) -> Dict[str, Dict[str, pd.Series]]:
+    """
+    Prepare cumulative forecast data from model forecasts and historical data.
+    
+    Args:
+        forecasts: Dictionary of model forecasts with their components
+        historical_data: Historical training data
+        target_col: Target column name
+        test_data: Optional test data (holdout set)
+        
+    Returns:
+        Dictionary with cumulative forecast results
+    """
+    try:
+        result = {
+            "historical": historical_data[target_col],
+            "models": {}
+        }
+        
+        # Add test data if provided
+        if test_data is not None:
+            result["test"] = test_data[target_col]
+        
+        # Add model forecasts
+        for model_name, forecast_data in forecasts.items():
+            if "forecast" in forecast_data:
+                result["models"][model_name] = {
+                    "forecast": forecast_data["forecast"]
+                }
+                
+                # Add confidence intervals if available
+                if "lower_bound" in forecast_data and "upper_bound" in forecast_data:
+                    result["models"][model_name]["lower_bound"] = forecast_data["lower_bound"]
+                    result["models"][model_name]["upper_bound"] = forecast_data["upper_bound"]
+                    
+                # Add components if available
+                if "components" in forecast_data:
+                    result["models"][model_name]["components"] = forecast_data["components"]
+                    
+                # Add feature importance if available
+                if "feature_importance" in forecast_data:
+                    result["models"][model_name]["feature_importance"] = forecast_data["feature_importance"]
+        
+        return result
+        
+    except Exception as e:
+        print(f"Error preparing cumulative forecast: {str(e)}")
+        return {
+            "historical": historical_data[target_col],
+            "models": {},
+            "error": str(e)
+        }
+
+
+def evaluate_forecast_models(actuals: pd.Series, 
+                        forecasts: Dict[str, pd.Series]) -> pd.DataFrame:
+    """
+    Evaluate multiple forecast models with enhanced error handling for dimension mismatches.
+    
+    Args:
+        actuals: Actual values
+        forecasts: Dictionary of model name to forecast values
+        
+    Returns:
+        DataFrame with evaluation metrics
+    """
+    results = []
+    
+    if actuals is None or len(actuals) == 0:
+        print("No actual values provided for evaluation")
+        return pd.DataFrame(columns=['Model', 'RMSE', 'MAPE', 'Error'])
+        
+    for model_name, forecast in forecasts.items():
+        try:
+            # Check if forecast and actuals have at least some overlap
+            if forecast is None or len(forecast) == 0:
+                print(f"No forecast values for model {model_name}")
+                results.append({
+                    'Model': model_name,
+                    'RMSE': np.nan,
+                    'MAPE': np.nan,
+                    'Error': 'No forecast values'
+                })
+                continue
+                
+            # Find overlapping indices for evaluation
+            common_indices = actuals.index.intersection(forecast.index)
+            
+            if len(common_indices) > 0:
+                # Get aligned forecast and actuals
+                aligned_actuals = actuals.loc[common_indices]
+                aligned_forecast = forecast.loc[common_indices]
+                
+                # Remove any remaining NaN values
+                valid_mask = ~(np.isnan(aligned_actuals) | np.isnan(aligned_forecast))
+                aligned_actuals = aligned_actuals[valid_mask]
+                aligned_forecast = aligned_forecast[valid_mask]
+                
+                if len(aligned_actuals) > 0:
+                    # Calculate RMSE
+                    rmse = np.sqrt(mean_squared_error(aligned_actuals, aligned_forecast))
+                    
+                    # Calculate MAPE with error handling for zeros
+                    try:
+                        # Add small epsilon to avoid division by zero
+                        epsilon = 1e-10
+                        mape = mean_absolute_percentage_error(
+                            aligned_actuals + epsilon, 
+                            aligned_forecast + epsilon
+                        ) * 100
+                    except Exception as e:
+                        mape = np.nan
+                        print(f"Error calculating MAPE: {str(e)}")
+                
+                results.append({
+                    'Model': model_name,
+                    'RMSE': rmse,
+                    'MAPE': mape
+                })
+            else:
+                print(f"No valid data points for evaluating {model_name}")
+                results.append({
+                    'Model': model_name,
+                    'RMSE': np.nan,
+                    'MAPE': np.nan,
+                    'Error': 'No valid data points for evaluation'
+                })
+        except Exception as e:
+            print(f"Error evaluating model {model_name}: {str(e)}")
+            results.append({
+                'Model': model_name,
+                'RMSE': np.nan,
+                'MAPE': np.nan,
+                'Error': str(e)
+            })
+    
+    return pd.DataFrame(results)
+
+
+def plot_forecast(actuals: pd.Series, 
+              forecast_result: Dict[str, Any],
+              title: str = "Demand Forecast",
+              figsize: Tuple[int, int] = (10, 6)) -> plt.Figure:
+    """
+    Plot forecast results with actuals.
+    
+    Args:
+        actuals: Actual values
+        forecast_result: Dictionary with forecast results
+        title: Plot title
+        figsize: Figure size
+        
+    Returns:
+        Matplotlib figure object
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    # Plot actuals
+    actuals.plot(ax=ax, label='Actual', linewidth=2)
+    
+    # Plot forecast
+    forecast_values = forecast_result['forecast']
+    model_name = forecast_result['model']
+    forecast_values.plot(ax=ax, label=f'{model_name} Forecast', linewidth=2)
+    
+    # Plot confidence intervals if available
+    if 'lower_bound' in forecast_result and 'upper_bound' in forecast_result:
+        ax.fill_between(
+            forecast_result['lower_bound'].index,
+            forecast_result['lower_bound'],
+            forecast_result['upper_bound'],
+            color='gray',
+            alpha=0.2,
+            label='95% Confidence Interval'
+        )
+    
+    ax.set_title(title)
+    ax.set_xlabel('Date')
+    ax.set_ylabel('Value')
+    ax.legend()
+    ax.grid(True)
+    
+    return fig
+
+
+def generate_sample_forecast_data(n_periods: int = 36, 
+                             freq: str = 'MS',
+                             with_trend: bool = True,
+                             with_seasonality: bool = True,
+                             with_noise: bool = True) -> pd.DataFrame:
+    """
+    Generate sample time series data for forecasting examples.
+    
+    Args:
+        n_periods: Number of periods to generate
+        freq: Frequency of time series ('MS' = month start)
+        with_trend: Whether to include trend component
+        with_seasonality: Whether to include seasonality
+        with_noise: Whether to add random noise
+        
+    Returns:
+        DataFrame with date and value columns
+    """
+    # Create date range
+    dates = pd.date_range(start='2020-01-01', periods=n_periods, freq=freq)
+    
+    # Base value
+    base_value = 1000
+    
+    # Create components
+    trend = np.arange(n_periods) * 20 if with_trend else np.zeros(n_periods)
+    
+    seasonality = np.zeros(n_periods)
+    if with_seasonality:
+        # Monthly seasonality
+        for i in range(n_periods):
+            month = dates[i].month
+            # Higher demand in Q4, lower in Q1
+            if month in [10, 11, 12]:  # Q4
+                seasonality[i] = 300
+            elif month in [1, 2, 3]:  # Q1
+                seasonality[i] = -150
+            elif month in [7, 8]:  # Summer
+                seasonality[i] = 200
+    
+    noise = np.random.normal(0, 100, n_periods) if with_noise else np.zeros(n_periods)
+    
+    # Combine components
+    values = base_value + trend + seasonality + noise
+    
+    # Ensure no negative values
+    values = np.maximum(values, 0)
+    
+    # Create DataFrame
+    df = pd.DataFrame({
+        'date': dates,
+        'value': values
+    })
+    
+    return df
+
+

@@ -1,0 +1,32 @@
+# Core web frameworks
+streamlit==1.22.0
+fastapi==0.95.1
+uvicorn==0.22.0
+
+# Data processing and analysis
+numpy==1.24.3
+pandas==2.0.1
+scikit-learn==1.2.2
+
+# Forecasting and ML libraries
+statsmodels==0.14.0
+xgboost==1.7.5
+prophet==1.1.4
+
+# Visualization
+plotly==5.14.1
+matplotlib==3.7.1
+seaborn==0.12.2
+
+# ML monitoring and validation
+mlflow==2.3.1
+evidently==0.3.2
+deepchecks==0.17.0
+
+# Database
+sqlalchemy==2.0.12
+
+# Utils
+python-dotenv==1.0.0
+pydantic==1.10.7
+requests==2.29.0

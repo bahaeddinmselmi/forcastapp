@@ -1,0 +1,16 @@
+date,type,severity,message,status
+2025-05-14 14:50,Quality Alert,Critical,Quality issue detected in batch #4800,New
+2025-05-14 14:50,Supplier Alert,Medium,Supplier performance issue detected,New
+2025-05-13 14:50,Capacity Alert,Critical,Production line capacity at 92%,Resolved
+2025-05-13 14:50,Cost Alert,Medium,Transportation costs exceeding budget by 6%,In Progress
+2025-05-12 14:50,Capacity Alert,Low,Production line capacity at 95%,Acknowledged
+2025-05-12 14:50,Capacity Alert,Medium,Production line capacity at 99%,Acknowledged
+2025-05-11 14:50,Inventory Alert,Low,Premium Widget inventory below safety stock level,Resolved
+2025-05-10 14:50,Demand Alert,Critical,Unexpected demand spike detected,New
+2025-05-10 14:50,Supplier Alert,High,Supplier performance issue detected,Acknowledged
+2025-05-10 14:50,Cost Alert,Low,Transportation costs exceeding budget by 18%,Resolved
+2025-05-09 14:50,Supplier Alert,Critical,Supplier performance issue detected,New
+2025-05-09 14:50,Supplier Alert,High,Supplier performance issue detected,New
+2025-05-09 14:50,Cost Alert,Low,Transportation costs exceeding budget by 8%,Acknowledged
+2025-05-08 14:50,Delivery Alert,High,Shipment delayed for order #93826,Resolved
+2025-05-08 14:50,Supplier Alert,Low,Supplier performance issue detected,Acknowledged

@@ -1,0 +1,37 @@
+resource_id,resource_name,date,available_capacity
+R001,Production Line 1,2025-05-01,2090
+R001,Production Line 1,2025-05-31,1818
+R001,Production Line 1,2025-06-30,2169
+R001,Production Line 1,2025-07-30,1922
+R001,Production Line 1,2025-08-29,1906
+R001,Production Line 1,2025-09-28,2167
+R001,Production Line 1,2025-10-28,1810
+R001,Production Line 1,2025-11-27,1814
+R001,Production Line 1,2025-12-27,1775
+R001,Production Line 1,2026-01-26,2016
+R001,Production Line 1,2026-02-25,1820
+R001,Production Line 1,2026-03-27,2109
+R002,Production Line 2,2025-05-01,2657
+R002,Production Line 2,2025-05-31,3189
+R002,Production Line 2,2025-06-30,2690
+R002,Production Line 2,2025-07-30,3078
+R002,Production Line 2,2025-08-29,3146
+R002,Production Line 2,2025-09-28,2845
+R002,Production Line 2,2025-10-28,2644
+R002,Production Line 2,2025-11-27,2944
+R002,Production Line 2,2025-12-27,2756
+R002,Production Line 2,2026-01-26,2902
+R002,Production Line 2,2026-02-25,2945
+R002,Production Line 2,2026-03-27,3275
+R003,Assembly Station,2025-05-01,4126
+R003,Assembly Station,2025-05-31,3797
+R003,Assembly Station,2025-06-30,4160
+R003,Assembly Station,2025-07-30,4379
+R003,Assembly Station,2025-08-29,3759
+R003,Assembly Station,2025-09-28,4137
+R003,Assembly Station,2025-10-28,4299
+R003,Assembly Station,2025-11-27,4311
+R003,Assembly Station,2025-12-27,4005
+R003,Assembly Station,2026-01-26,3868
+R003,Assembly Station,2026-02-25,3584
+R003,Assembly Station,2026-03-27,3553

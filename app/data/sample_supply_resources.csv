@@ -1,0 +1,4 @@
+resource_id,name,capacity_per_day
+R001,Production Line 1,100
+R002,Production Line 2,150
+R003,Assembly Station,200
