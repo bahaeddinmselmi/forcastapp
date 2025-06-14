@@ -199,9 +199,38 @@ try:
 except ImportError:
     SKLEARN_EXTRAS_AVAILABLE = False
 
-# Try importing pmdarima for ARIMA optimization
+# Import statsmodels for ARIMA optimization
 try:
-    from pmdarima import auto_arima
+    from statsmodels.tsa.arima.model import ARIMA
+    from statsmodels.tsa.stattools import adfuller
+    def auto_arima(y, **kwargs):
+        # Simple function to find optimal ARIMA parameters
+        d = 1  # Default differencing
+        # Check if differencing is needed
+        adf_test = adfuller(y)
+        if adf_test[1] < 0.05:  # p-value < 0.05 means stationary
+            d = 0
+        
+        # Try different combinations
+        best_aic = float('inf')
+        best_order = (1, d, 1)
+        for p in range(0, 3):
+            for q in range(0, 3):
+                try:
+                    model = ARIMA(y, order=(p, d, q))
+                    results = model.fit()
+                    if results.aic < best_aic:
+                        best_aic = results.aic
+                        best_order = (p, d, q)
+                except:
+                    continue
+        
+        class ARIMAResult:
+            def __init__(self, order):
+                self.order = order
+        
+        return ARIMAResult(best_order)
+    
     PMDARIMA_AVAILABLE = True
 except ImportError:
     PMDARIMA_AVAILABLE = False
@@ -220,12 +249,53 @@ except ImportError:
     PROPHET_AVAILABLE = False
     logger.warning("Prophet package not available. Prophet forecasting will not be available.")
 
+# We now use statsmodels ARIMA instead of pmdarima
+PMDARIMA_AVAILABLE = False  # Force using statsmodels implementation
 try:
-    from pmdarima import auto_arima
-    PMDARIMA_AVAILABLE = True
+    from statsmodels.tsa.arima.model import ARIMA
+    from statsmodels.tsa.stattools import adfuller
+    def auto_arima(y, **kwargs):
+        # Simple function to find optimal ARIMA parameters
+        d = 1  # Default differencing
+        # Check if differencing is needed
+        adf_test = adfuller(y)
+        if adf_test[1] < 0.05:  # p-value < 0.05 means stationary
+            d = 0
+        
+        # Try different combinations
+        best_aic = float('inf')
+        best_order = (1, d, 1)
+        for p in range(0, 3):
+            for q in range(0, 3):
+                try:
+                    model = ARIMA(y, order=(p, d, q))
+                    results = model.fit()
+                    if results.aic < best_aic:
+                        best_aic = results.aic
+                        best_order = (p, d, q)
+                except:
+                    continue
+        
+        class ARIMAResult:
+            def __init__(self, order):
+                self.order = order
+                self.model = ARIMA(y, order=order).fit()
+            
+            def predict(self, n_periods=1):
+                return self.model.forecast(steps=n_periods)
+        
+        return ARIMAResult(best_order)
+    
 except ImportError:
-    PMDARIMA_AVAILABLE = False
-    logger.warning("pmdarima package not available. Auto-ARIMA functionality will be limited.")
+    logger.warning("statsmodels package not available. ARIMA functionality will be limited.")
+    # Define a simple fallback
+    def auto_arima(y, **kwargs):
+        class SimpleARIMAResult:
+            def __init__(self):
+                self.order = (1, 1, 1)
+            def predict(self, n_periods=1):
+                return [y[-1]] * n_periods
+        return SimpleARIMAResult()
 
 try:
     import xgboost as xgb
@@ -467,14 +537,14 @@ def create_future_index(historical_data, periods):
             logger.info(f"Adjusted frequency to {freq} based on day of month pattern")
                 
         # Generate the future dates using the determined frequency
-        # Use a safe approach by generating 1 more period than needed and slicing
-        future_dates = pd.date_range(start=last_date, periods=periods+1, freq=freq)[1:]
+        # Start forecasting from the last date
+        future_dates = pd.date_range(start=last_date, periods=periods, freq=freq)
         
         # Verify that the generated dates make sense
         if (future_dates[-1] - future_dates[0]).days > periods * 366:
             logger.warning("Generated dates span too far into the future - adjusting")
             # Fall back to standard monthly frequency
-            future_dates = pd.date_range(start=last_date, periods=periods+1, freq='MS')[1:]
+            future_dates = pd.date_range(start=last_date, periods=periods, freq='MS')
         
         logger.info(f"Future dates generated: {future_dates[0]} to {future_dates[-1]}")
         return future_dates
@@ -578,10 +648,11 @@ def generate_arima_forecast(historical_data, forecast_periods, target_col, use_a
             forecast_result = fitted.get_forecast(steps=forecast_periods)
             forecast = forecast_result.predicted_mean
         elif hasattr(fitted, 'predict'):
-            # Try using predict method with future dates
+            # Set forecast to start from the last date in the data
+            last_index_loc = len(ts_data) - 1  # Get the position of the last actual data point
             forecast = fitted.predict(
-                start=len(ts_data),
-                end=len(ts_data) + forecast_periods - 1
+                start=last_index_loc + 1,  # Start from the point after the last actual data
+                end=last_index_loc + forecast_periods  # Forecast for the specified number of periods
             )
         else:
             # Fallback: manual forecasting using AR coefficients

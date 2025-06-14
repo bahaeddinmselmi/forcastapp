@@ -103,18 +103,11 @@ def create_future_date_range(last_date, periods, freq='MS'):
             import datetime
             last_date = datetime.datetime.now()
             
-        # If freq is monthly, make sure we start from the next month
-        if freq == 'MS':
-            next_date = last_date + pd.DateOffset(months=1)
-            next_date = next_date.replace(day=1)  # Set to first day of month
-        elif freq == 'D':
-            next_date = last_date + pd.DateOffset(days=1)
-        else:
-            # For other frequencies, just add 1 period
-            next_date = last_date + pd.tseries.frequencies.to_offset(freq)
+        # Start the forecast from the last date
+        start_date = last_date
             
         # Create the date range
-        future_dates = pd.date_range(start=next_date, periods=periods, freq=freq)
+        future_dates = pd.date_range(start=start_date, periods=periods, freq=freq)
         return future_dates
     except Exception as e:
         # If all else fails, create a generic date range starting from today

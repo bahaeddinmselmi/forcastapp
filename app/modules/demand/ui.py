@@ -457,15 +457,15 @@ def show_demand_planning():
                 data = st.session_state['data']
                 target_col = st.session_state['target_col']
                 
-                # Split data into training and testing sets
-                train_size = int(len(data) * 0.8)
-                train_data, test_data = data[:train_size], data[train_size:]
-                
-                # Create forecast index
-                future_dates = create_future_index(train_data, forecast_period)
+                # Create forecast index based on the full dataset's last date
+                future_dates = create_future_index(data, forecast_period)
                 
                 # Store future_dates in session state for later use
                 st.session_state['future_dates'] = future_dates
+                
+                # Split data into training and testing sets
+                train_size = int(len(data) * 0.8)
+                train_data, test_data = data[:train_size], data[train_size:]
                 
                 forecasts = {}
                 
@@ -509,18 +509,19 @@ def show_demand_planning():
                     with st.spinner("Running ARIMA model with parallel processing..."):
                         try:
                             if ENHANCED_FORECASTING:
-                                # Use optimized parameters if available
+                                # Train on full data to get proper start date for forecast
                                 if 'optimize_models' in locals() and optimize_models:
-                                    # Get optimized parameters
-                                    order = optimize_arima_hyperparameters(processed_data, target_col)
+                                    # Get optimized parameters using training data
+                                    order = optimize_arima_hyperparameters(train_data, target_col)
                                     st.info(f"Using optimized ARIMA parameters: p={order[0]}, d={order[1]}, q={order[2]}")
-                                    # We need to modify the function call to pass the order parameters
-                                    arima_forecast = generate_arima_forecast(processed_data, forecast_period, target_col, use_auto=False)
+                                    # Use full data for forecasting
+                                    arima_forecast = generate_arima_forecast(data, forecast_period, target_col, use_auto=False)
                                 else:
-                                    arima_forecast = generate_arima_forecast(processed_data, forecast_period, target_col)
+                                    # Use full data for forecasting
+                                    arima_forecast = generate_arima_forecast(data, forecast_period, target_col)
                             else:
-                                # Fallback to standard ARIMA
-                                model = ARIMA(train_data[target_col], order=(1,1,1))
+                                # Fallback to standard ARIMA, but use full data
+                                model = ARIMA(data[target_col], order=(1,1,1))
                                 fitted = model.fit()
                                 arima_forecast = fitted.forecast(steps=forecast_period)
                                 arima_forecast.index = future_dates[:len(arima_forecast)]
@@ -536,15 +537,16 @@ def show_demand_planning():
                         try:
                             if ENHANCED_FORECASTING:
                                 # Use the enhanced forecasting with proper frequency handling
-                                es_forecast = generate_exp_smoothing_forecast(processed_data, forecast_period, target_col)
+                                # Use full data for proper forecast start date
+                                es_forecast = generate_exp_smoothing_forecast(data, forecast_period, target_col)
                             else:
-                                # Determine data frequency and seasonal period
+                                # Determine data frequency and seasonal period using full data
                                 # Check if data is monthly (most common business case)
-                                if len(set(train_data.index.month)) > 1 and len(set(train_data.index.year)) >= 1:
+                                if len(set(data.index.month)) > 1 and len(set(data.index.year)) >= 1:
                                     seasonal_periods = 12  # Monthly data with yearly seasonality
-                                elif len(train_data) >= 14:  # For weekly data
+                                elif len(data) >= 14:  # For weekly data
                                     seasonal_periods = 52  # Weekly data with yearly seasonality
-                                elif len(train_data) >= 60:  # For daily data
+                                elif len(data) >= 60:  # For daily data
                                     seasonal_periods = 7  # Daily data with weekly seasonality
                             forecasts["Exponential Smoothing"] = es_forecast
                             st.success("Exponential Smoothing forecast complete")
@@ -1631,15 +1633,15 @@ def create_future_index(historical_data, forecast_periods, freq=None):
     try:
         # Get the last date from historical data
         last_date = data.index[-1]
-        # Generate future dates with a safe approach (generate one extra and slice)
-        future_index = pd.date_range(start=last_date, periods=forecast_periods+1, freq=freq)[1:]
+        # Generate future dates starting from the last date (inclusive)
+        future_index = pd.date_range(start=last_date, periods=forecast_periods, freq=freq)
         
         # Verify the generated dates make sense
         date_span_days = (future_index[-1] - future_index[0]).days
         if date_span_days > forecast_periods * 366:  # Sanity check
             print("Generated dates span too far into the future - adjusting")
             # Fall back to standard monthly frequency
-            future_index = pd.date_range(start=last_date, periods=forecast_periods+1, freq='MS')[1:]
+            future_index = pd.date_range(start=last_date, periods=forecast_periods, freq='MS')
     except Exception as e:
         print(f"Error creating future index: {e}")
         # Use first day of current month for consistency in emergency fallback

@@ -271,17 +271,9 @@ def create_future_date_range(last_date, periods, freq='MS'):
                 # Fallback to current date if conversion fails
                 last_date = pd.Timestamp.now()
             
-        # Calculate the next month after the last date
-        if last_date.month == 12:
-            next_month_year = last_date.year + 1
-            next_month = 1
-        else:
-            next_month_year = last_date.year
-            next_month = last_date.month + 1
-            
-        # Create start date for forecast (first day of the next month)
-        forecast_start_date = datetime(next_month_year, next_month, 1)
-        print(f"Creating forecast starting from {forecast_start_date} (after last date {last_date})")
+        # Start the forecast from the last date
+        forecast_start_date = last_date
+        print(f"Creating forecast starting from {forecast_start_date}")
         
         # Create a proper future index
         future_index = pd.date_range(
