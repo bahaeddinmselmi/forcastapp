@@ -99,3 +99,39 @@ Users can create and simulate various "what-if" scenarios:
 ## Contributing
 
 Contributions are welcome! Please feel free to submit pull requests or open issues for any bugs or feature requests.
+
+## Deployment
+
+### Local Development
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/bahaeddinmselmi/forcastapp.git
+   cd forcastapp
+   ```
+
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. Run the app:
+   ```bash
+   streamlit run app/main.py
+   ```
+
+### Streamlit Cloud Deployment
+
+1. Fork this repository to your GitHub account
+2. Log in to [Streamlit Cloud](https://share.streamlit.io)
+3. Create a new app and select your forked repository
+4. Set the following:
+   - Main file path: `app/main.py`
+   - Python version: 3.13
+5. Click "Deploy!"
+
+## Configuration
+
+The app can be configured through:
+- `.streamlit/config.toml` for Streamlit settings
+- `app/config.py` for application settings
