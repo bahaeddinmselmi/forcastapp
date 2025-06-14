@@ -9,7 +9,7 @@ A modular Integrated Business Planning software system that helps align demand, 
 - **IBP for Supply**: Production and supply planning based on capacity constraints
 - **IBP for S&OP**: Strategic alignment of supply/demand planning with financial goals
 - **IBP for Response**: Real-time re-planning for supply chain disruptions
-- **IBP Control Tower**: End-to-end visibility of supply chain performance metrics
+- **IBP for Control Tower**: End-to-end visibility of supply chain performance metrics
 
 ## Technical Stack
 
@@ -36,10 +36,18 @@ A modular Integrated Business Planning software system that helps align demand, 
 ## Module Overview
 
 ### Demand Planning
-Forecast demand using historical data, market intelligence, and AI/ML models.
+- Advanced forecasting algorithms including ARIMA, Exponential Smoothing, and Prophet
+- Automated model selection based on data characteristics
+- Support for multiple time series frequencies (daily, weekly, monthly)
+- Interactive visualization of forecast results
+- Model performance metrics and validation
 
 ### Inventory Optimization
-Optimize stock levels, manage safety stock, and reduce inventory costs.
+- Dynamic safety stock calculations
+- EOQ (Economic Order Quantity) optimization
+- Service level-based inventory planning
+- ABC/XYZ analysis
+- Inventory cost optimization
 
 ### Supply Planning
 Plan production and procurement based on demand forecasts and capacity constraints.
@@ -55,10 +63,29 @@ Monitor end-to-end supply chain performance with real-time dashboards and alerts
 
 ## Data Sources
 
-The system can import data from:
-- CSV files
+The system supports various data import methods:
+- CSV files with custom formatting
+- Excel files (.xlsx, .xls)
 - SQL databases
 - External APIs (economic indicators, market trends, etc.)
+
+## Sample Data
+
+The `app/data` directory contains sample datasets for testing:
+- Sales history
+- Inventory levels
+- Supply chain data
+- KPI metrics
+- Alerts and notifications
+
+## Recent Updates
+
+- Improved forecasting accuracy with automated frequency detection
+- Enhanced UI with better error handling and user feedback
+- Streamlined data import process
+- Better exception handling and error messages
+- Cleaned up codebase and removed redundant files
+- Updated dependency management
 
 ## Scenario Planning
 
@@ -67,3 +94,8 @@ Users can create and simulate various "what-if" scenarios:
 - Price changes and promotions
 - Supply chain disruptions
 - Production capacity changes
+- Market trend impacts
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit pull requests or open issues for any bugs or feature requests.
